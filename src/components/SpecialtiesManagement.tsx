@@ -15,9 +15,19 @@ interface Patient {
   updated_at: string;
 }
 
+interface Consultation {
+  mrn: string;
+  patient_name: string;
+  created_at: string;
+  status: 'Active' | 'Completed';
+  consultation_specialty: string;
+  requesting_department: string;
+  updated_at: string;
+}
+
 interface SpecialtyData {
   specialty: string;
-  patients: Patient[];
+  patients: (Patient | Consultation)[];
 }
 
 const specialtiesList = [
@@ -52,7 +62,7 @@ const SpecialtiesManagement: React.FC = () => {
       setLoading(true);
       setError(null);
       
-      const { data, error } = await supabase
+      const { data: patientsData, error: patientsError } = await supabase
         .from('patients')
         .select(`
           mrn,
@@ -66,23 +76,47 @@ const SpecialtiesManagement: React.FC = () => {
         `)
         .order('admission_date', { ascending: false });
 
-      if (error) throw error;
+      const { data: consultationsData, error: consultationsError } = await supabase
+        .from('consultations')
+        .select(`
+          mrn,
+          patient_name,
+          created_at,
+          status,
+          consultation_specialty,
+          requesting_department,
+          updated_at
+        `)
+        .order('created_at', { ascending: false });
 
-      if (!data || data.length === 0) {
+      if (patientsError) throw patientsError;
+      if (consultationsError) throw consultationsError;
+
+      if (!patientsData && !consultationsData) {
         setSpecialtiesData([]);
         setLoading(false);
         return;
       }
 
+      const allData = [
+        ...(patientsData || []).map((patient: Patient) => ({
+          ...patient,
+          type: 'admission' as const,
+          admission_date: new Date(patient.admission_date).toLocaleDateString(),
+        })),
+        ...(consultationsData || []).map((consultation: Consultation) => ({
+          ...consultation,
+          type: 'consultation' as const,
+          admission_date: new Date(consultation.created_at).toLocaleDateString(),
+          specialty: consultation.consultation_specialty,
+          patient_status: consultation.status,
+          diagnosis: consultation.requesting_department,
+        })),
+      ];
+
       const groupedData = specialtiesList.map(specialty => ({
         specialty,
-        patients: data
-          .filter(patient => patient.specialty === specialty)
-          .map(patient => ({
-            ...patient,
-            admission_date: new Date(patient.admission_date).toLocaleDateString(),
-            discharge_date: patient.discharge_date ? new Date(patient.discharge_date).toLocaleDateString() : null,
-          }))
+        patients: allData.filter(item => item.specialty === specialty)
       }));
 
       setSpecialtiesData(groupedData);
@@ -103,13 +137,13 @@ const SpecialtiesManagement: React.FC = () => {
     setSortConfig({ key, direction });
   };
 
-  const sortedData = (patients: Patient[]) => {
+  const sortedData = (patients: (Patient | Consultation)[]) => {
     if (!sortConfig) return patients;
     return [...patients].sort((a, b) => {
-      if (a[sortConfig.key as keyof Patient] < b[sortConfig.key as keyof Patient]) {
+      if (a[sortConfig.key as keyof (Patient | Consultation)] < b[sortConfig.key as keyof (Patient | Consultation)]) {
         return sortConfig.direction === 'ascending' ? -1 : 1;
       }
-      if (a[sortConfig.key as keyof Patient] > b[sortConfig.key as keyof Patient]) {
+      if (a[sortConfig.key as keyof (Patient | Consultation)] > b[sortConfig.key as keyof (Patient | Consultation)]) {
         return sortConfig.direction === 'ascending' ? 1 : -1;
       }
       return 0;
@@ -209,19 +243,16 @@ const SpecialtiesManagement: React.FC = () => {
                       </button>
                     </th>
                     <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      <button onClick={() => handleSort('discharge_date')} className="flex items-center">
-                        Discharge Date
-                        <ArrowUpDown className="h-4 w-4 ml-1" />
-                      </button>
-                    </th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Status
                     </th>
                     <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       <button onClick={() => handleSort('diagnosis')} className="flex items-center">
-                        Diagnosis
+                        Diagnosis/Department
                         <ArrowUpDown className="h-4 w-4 ml-1" />
                       </button>
+                    </th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Type
                     </th>
                     <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Actions
@@ -241,9 +272,6 @@ const SpecialtiesManagement: React.FC = () => {
                         <div className="text-sm text-gray-500">{patient.admission_date}</div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm text-gray-500">{patient.discharge_date || 'N/A'}</div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
                         <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
                           patient.patient_status === 'Active' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
                         }`}>
@@ -257,6 +285,9 @@ const SpecialtiesManagement: React.FC = () => {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-sm text-gray-900">{patient.diagnosis}</div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm text-gray-900">{(patient as any).type === 'consultation' ? 'Consultation' : 'Admission'}</div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                         <Link
